@@ -3,6 +3,9 @@
 import { useRef, useState } from "react";
 import jsPDF from "jspdf";
 
+// 🔗 CHANGE THIS IF YOUR RAILWAY URL IS DIFFERENT
+const BACKEND_URL = "http://localhost:8080";
+
 export default function AppPage() {
   const recognitionRef = useRef<any>(null);
 
@@ -12,55 +15,50 @@ export default function AppPage() {
   const [studyNotes, setStudyNotes] = useState("");
   const [status, setStatus] = useState("");
 
-  // 🎙️ Start recording
+  // 🎙️ Start recording (long-session safe)
   const startRecording = () => {
-  const SpeechRecognition =
-    (window as any).webkitSpeechRecognition ||
-    (window as any).SpeechRecognition;
+    const SpeechRecognition =
+      (window as any).webkitSpeechRecognition ||
+      (window as any).SpeechRecognition;
 
-  if (!SpeechRecognition) {
-    alert("Speech recognition works best in Google Chrome.");
-    return;
-  }
+    if (!SpeechRecognition) {
+      alert("Speech recognition works best in Google Chrome.");
+      return;
+    }
 
-  const recognition = new SpeechRecognition();
-  recognition.continuous = true;
-  recognition.interimResults = true;
-  recognition.lang = "en-US";
+    const recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
 
-  let finalTranscript = transcript;
+    let finalTranscript = transcript;
 
-  recognition.onresult = (event: any) => {
-    let interim = "";
-    for (let i = event.resultIndex; i < event.results.length; i++) {
-      const text = event.results[i][0].transcript;
-      if (event.results[i].isFinal) {
-        finalTranscript += text + " ";
-      } else {
-        interim += text;
+    recognition.onresult = (event: any) => {
+      let interim = "";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const text = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          finalTranscript += text + " ";
+        } else {
+          interim += text;
+        }
       }
-    }
-    setTranscript(finalTranscript + interim);
+      setTranscript(finalTranscript + interim);
+    };
+
+    recognition.onend = () => {
+      if (isRecording) recognition.start();
+    };
+
+    recognition.onerror = () => {
+      if (isRecording) recognition.start();
+    };
+
+    recognition.start();
+    recognitionRef.current = recognition;
+    setIsRecording(true);
+    setStatus("Recording (long session mode enabled)");
   };
-
-  recognition.onend = () => {
-    if (isRecording) {
-      recognition.start(); // 🔁 auto-restart
-    }
-  };
-
-  recognition.onerror = () => {
-    if (isRecording) {
-      recognition.start(); // 🔁 recover silently
-    }
-  };
-
-  recognition.start();
-  recognitionRef.current = recognition;
-  setIsRecording(true);
-  setStatus("Recording (long session mode enabled)");
-};
-
 
   // ⏹ Stop recording
   const stopRecording = () => {
@@ -78,31 +76,45 @@ export default function AppPage() {
 
     setStatus("Generating clean notes…");
 
-    const res = await fetch("http://localhost:8080/summarize", {
-      method: "POST",
-      headers: { "Content-Type": "text/plain;charset=UTF-8" },
-      body: transcript,
-    });
+    try {
+      const res = await fetch(`${BACKEND_URL}/summarize`, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=UTF-8" },
+        body: transcript,
+      });
 
-    const text = await res.text();
-    setSummary(text);
-    setStudyNotes("");
-    setStatus("Notes ready");
+      if (!res.ok) throw new Error("Failed");
+
+      const text = await res.text();
+      setSummary(text);
+      setStudyNotes("");
+      setStatus("Notes ready");
+    } catch {
+      setStatus("Failed to generate notes");
+    }
   };
 
   // 🎓 Smart Study Mode
   const generateStudyNotes = async () => {
+    if (!summary.trim()) return;
+
     setStatus("Generating study notes…");
 
-    const res = await fetch("http://localhost:8080/study-mode", {
-      method: "POST",
-      headers: { "Content-Type": "text/plain;charset=UTF-8" },
-      body: summary,
-    });
+    try {
+      const res = await fetch(`${BACKEND_URL}/study-mode`, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=UTF-8" },
+        body: summary,
+      });
 
-    const text = await res.text();
-    setStudyNotes(text);
-    setStatus("Study notes ready");
+      if (!res.ok) throw new Error("Failed");
+
+      const text = await res.text();
+      setStudyNotes(text);
+      setStatus("Study notes ready");
+    } catch {
+      setStatus("Failed to generate study notes");
+    }
   };
 
   // 📄 Download TXT
@@ -137,12 +149,12 @@ export default function AppPage() {
         </p>
       </div>
 
-      {/* Start Recording – TOP CENTER */}
+      {/* Start Recording */}
       <div className="flex justify-center mb-6">
         {!isRecording ? (
           <button
             onClick={startRecording}
-            className="px-10 py-4 bg-indigo-600 text-white rounded-full font-semibold text-lg hover:bg-indigo-700 transition"
+            className="px-10 py-4 bg-indigo-600 text-white rounded-full font-semibold text-lg hover:bg-indigo-700"
           >
             🎙️ Start Recording
           </button>
@@ -158,30 +170,28 @@ export default function AppPage() {
 
       {/* Status */}
       {status && (
-        <p className="text-center text-sm text-gray-600 mb-4">
-          {status}
-        </p>
+        <p className="text-center text-sm text-gray-600 mb-4">{status}</p>
       )}
 
       {/* Transcript */}
       <div className="flex-1 max-w-6xl mx-auto w-full">
         <p className="text-sm text-gray-600 mb-2 text-center">
-          Live transcript — you can edit before generating notes
+          Live transcript — editable before generating notes
         </p>
         <textarea
-          className="w-full h-52 p-4 rounded-xl border border-gray-300 bg-white/60 text-gray-800 focus:ring-2 focus:ring-indigo-500 outline-none"
+          className="w-full h-52 p-4 rounded-xl border bg-white/30 text-black placeholder-gray-600"
           placeholder="Your lecture text will appear here…"
           value={transcript}
           onChange={(e) => setTranscript(e.target.value)}
         />
       </div>
 
-      {/* Generate Notes – BOTTOM CENTER */}
+      {/* Generate Notes */}
       {transcript && !summary && !isRecording && (
         <div className="flex justify-center mt-6">
           <button
             onClick={generateNotes}
-            className="px-10 py-4 bg-green-600 text-white rounded-full font-semibold text-lg hover:bg-green-700 transition"
+            className="px-10 py-4 bg-green-600 text-white rounded-full font-semibold text-lg"
           >
             ✨ Generate Notes
           </button>
@@ -191,12 +201,10 @@ export default function AppPage() {
       {/* Clean Notes */}
       {summary && (
         <div className="max-w-6xl mx-auto w-full mt-8">
-          <h2 className="text-xl font-semibold text-gray-800 mb-3">
-            Clean Notes
-          </h2>
+          <h2 className="text-black font-semibold mb-3">Clean Notes</h2>
 
           <textarea
-            className="w-full h-64 p-4 rounded-xl border border-gray-300 bg-white/70 text-gray-800 focus:ring-2 focus:ring-indigo-500 outline-none"
+            className="w-full h-52 p-4 rounded-xl border bg-white/30 text-black placeholder-gray-600"
             value={summary}
             onChange={(e) => setSummary(e.target.value)}
           />
@@ -216,12 +224,11 @@ export default function AppPage() {
             </button>
           </div>
 
-          {/* Study Mode Button */}
           {!studyNotes && (
             <div className="flex justify-center mt-6">
               <button
                 onClick={generateStudyNotes}
-                className="px-10 py-4 bg-yellow-500 text-white rounded-full font-semibold text-lg hover:bg-yellow-600 transition"
+                className="px-10 py-4 bg-yellow-500 text-white rounded-full font-semibold text-lg"
               >
                 🎓 Convert to Study Notes
               </button>
@@ -233,12 +240,10 @@ export default function AppPage() {
       {/* Study Notes */}
       {studyNotes && (
         <div className="max-w-6xl mx-auto w-full mt-10">
-          <h2 className="text-xl font-semibold text-gray-800 mb-3">
-            Study Mode Notes
-          </h2>
+          <h2 className="text-black font-semibold mb-3">Study Mode Notes</h2>
 
           <textarea
-            className="w-full h-72 p-4 rounded-xl border border-gray-300 bg-white/80 text-gray-800"
+            className="w-full h-52 p-4 rounded-xl border bg-white/30 text-black placeholder-gray-600"
             value={studyNotes}
             onChange={(e) => setStudyNotes(e.target.value)}
           />
